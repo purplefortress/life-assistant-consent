@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authorize Access - Life Assistant</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8fafc; color: #1e293b;
+      display: flex; justify-content: center; align-items: center;
+      min-height: 100vh; padding: 20px;
+    }
+    .card {
+      background: white; border-radius: 12px; padding: 32px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1); max-width: 400px; width: 100%;
+    }
+    h2 { font-size: 1.25rem; margin-bottom: 16px; }
+    p { color: #64748b; margin-bottom: 16px; font-size: 0.9rem; }
+    input {
+      width: 100%; padding: 10px 12px; border: 1px solid #e2e8f0;
+      border-radius: 8px; font-size: 0.95rem; margin-bottom: 12px;
+    }
+    input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+    .btn {
+      padding: 10px 20px; border: none; border-radius: 8px;
+      font-size: 0.95rem; cursor: pointer; font-weight: 500;
+    }
+    .btn-primary { background: #3b82f6; color: white; width: 100%; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-approve { background: #22c55e; color: white; flex: 1; }
+    .btn-approve:hover { background: #16a34a; }
+    .btn-deny { background: #ef4444; color: white; flex: 1; }
+    .btn-deny:hover { background: #dc2626; }
+    .btn-row { display: flex; gap: 12px; margin-top: 20px; }
+    .error { color: #ef4444; font-size: 0.85rem; margin-bottom: 8px; }
+    .info { background: #f1f5f9; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
+    .info strong { display: block; margin-bottom: 4px; }
+    .scopes { list-style: none; padding: 0; }
+    .scopes li { padding: 4px 0; font-size: 0.9rem; }
+    .scopes li::before { content: "\2713 "; color: #22c55e; }
+    .hidden { display: none; }
+    .loading { text-align: center; padding: 20px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div id="login-section">
+      <h2>Sign In</h2>
+      <p>Sign in to authorize this application.</p>
+      <div id="login-error" class="error hidden"></div>
+      <input id="email" type="email" placeholder="Email address" autocomplete="email">
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password">
+      <button class="btn btn-primary" onclick="handleLogin()">Sign In</button>
+    </div>
+
+    <div id="consent-section" class="hidden">
+      <h2 id="consent-title">Authorize Access</h2>
+      <p>This application wants to access your Life Assistant data.</p>
+      <div id="client-info" class="info"></div>
+      <div id="scopes-section" class="hidden">
+        <strong style="font-size:0.85rem;margin-bottom:8px;display:block;">Requested permissions:</strong>
+        <ul id="scopes-list" class="scopes"></ul>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-approve" onclick="handleApprove()">Approve</button>
+        <button class="btn btn-deny" onclick="handleDeny()">Deny</button>
+      </div>
+    </div>
+
+    <div id="status-section" class="hidden">
+      <div class="loading" id="status-msg"></div>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = "https://ddwttqtoqvlvnfrvempl.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkd3R0cXRvcXZsdm5mcnZlbXBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA1NTcyMzgsImV4cCI6MjA4NjEzMzIzOH0.iOs7hiQKPenSiUlcnPtL9t6aUpTNr9CLNi5Q4Lai2Nc";
+
+    const params = new URLSearchParams(window.location.search);
+    const authorizationId = params.get("authorization_id") || "";
+
+    const { createClient } = window.supabase;
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    function showError(msg) {
+      const el = document.getElementById("login-error");
+      el.textContent = msg;
+      el.classList.remove("hidden");
+    }
+
+    function showStatus(msg) {
+      document.getElementById("login-section").classList.add("hidden");
+      document.getElementById("consent-section").classList.add("hidden");
+      document.getElementById("status-section").classList.remove("hidden");
+      document.getElementById("status-msg").textContent = msg;
+    }
+
+    async function handleLogin() {
+      const email = document.getElementById("email").value;
+      const password = document.getElementById("password").value;
+      if (!email || !password) { showError("Please enter email and password."); return; }
+
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) { showError(error.message); return; }
+
+      await showConsent();
+    }
+
+    async function showConsent() {
+      if (!authorizationId) {
+        showStatus("Error: No authorization_id provided.");
+        return;
+      }
+
+      document.getElementById("login-section").classList.add("hidden");
+      document.getElementById("consent-section").classList.remove("hidden");
+
+      try {
+        const { data, error } = await sb.auth.oauth.getAuthorizationDetails(authorizationId);
+        if (error) throw error;
+
+        const clientName = data.client?.name || "Unknown Application";
+        document.getElementById("consent-title").textContent = "Authorize " + clientName;
+        document.getElementById("client-info").innerHTML =
+          "<strong>" + clientName + "</strong>" +
+          (data.redirect_uri ? "<span style='font-size:0.8rem;color:#94a3b8;'>Redirect: " + data.redirect_uri + "</span>" : "");
+
+        if (data.scopes && data.scopes.length > 0) {
+          document.getElementById("scopes-section").classList.remove("hidden");
+          document.getElementById("scopes-list").innerHTML =
+            data.scopes.map(function(s) { return "<li>" + s + "</li>"; }).join("");
+        }
+      } catch (e) {
+        showStatus("Error loading authorization details: " + e.message);
+      }
+    }
+
+    async function handleApprove() {
+      showStatus("Approving...");
+      try {
+        const { data, error } = await sb.auth.oauth.approveAuthorization(authorizationId);
+        if (error) throw error;
+        window.location.href = data.redirect_to;
+      } catch (e) {
+        showStatus("Error: " + e.message);
+      }
+    }
+
+    async function handleDeny() {
+      showStatus("Denying...");
+      try {
+        const { data, error } = await sb.auth.oauth.denyAuthorization(authorizationId);
+        if (error) throw error;
+        window.location.href = data.redirect_to;
+      } catch (e) {
+        showStatus("Error: " + e.message);
+      }
+    }
+
+    // Check if already logged in
+    (async function() {
+      const { data: { user } } = await sb.auth.getUser();
+      if (user && authorizationId) {
+        await showConsent();
+      }
+    })();
+  </script>
+</body>
+</html>
