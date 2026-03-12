@@ -43,6 +43,7 @@
     .scopes li::before { content: "\2713 "; color: #22c55e; }
     .hidden { display: none; }
     .loading { text-align: center; padding: 20px; color: #64748b; }
+    .debug { background: #fef3c7; padding: 12px; border-radius: 8px; margin-top: 16px; font-size: 0.8rem; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -72,39 +73,44 @@
 
     <div id="status-section" class="hidden">
       <div class="loading" id="status-msg"></div>
+      <div id="debug-info" class="debug hidden"></div>
     </div>
   </div>
 
   <script>
-    const SUPABASE_URL = "https://ddwttqtoqvlvnfrvempl.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkd3R0cXRvcXZsdm5mcnZlbXBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA1NTcyMzgsImV4cCI6MjA4NjEzMzIzOH0.iOs7hiQKPenSiUlcnPtL9t6aUpTNr9CLNi5Q4Lai2Nc";
+    var SUPABASE_URL = "https://ddwttqtoqvlvnfrvempl.supabase.co";
+    var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkd3R0cXRvcXZsdm5mcnZlbXBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA1NTcyMzgsImV4cCI6MjA4NjEzMzIzOH0.iOs7hiQKPenSiUlcnPtL9t6aUpTNr9CLNi5Q4Lai2Nc";
 
-    const params = new URLSearchParams(window.location.search);
-    const authorizationId = params.get("authorization_id") || "";
+    var params = new URLSearchParams(window.location.search);
+    var authorizationId = params.get("authorization_id") || "";
 
-    const { createClient } = window.supabase;
-    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     function showError(msg) {
-      const el = document.getElementById("login-error");
+      var el = document.getElementById("login-error");
       el.textContent = msg;
       el.classList.remove("hidden");
     }
 
-    function showStatus(msg) {
+    function showStatus(msg, debug) {
       document.getElementById("login-section").classList.add("hidden");
       document.getElementById("consent-section").classList.add("hidden");
       document.getElementById("status-section").classList.remove("hidden");
       document.getElementById("status-msg").textContent = msg;
+      if (debug) {
+        var dbg = document.getElementById("debug-info");
+        dbg.textContent = debug;
+        dbg.classList.remove("hidden");
+      }
     }
 
     async function handleLogin() {
-      const email = document.getElementById("email").value;
-      const password = document.getElementById("password").value;
+      var email = document.getElementById("email").value;
+      var password = document.getElementById("password").value;
       if (!email || !password) { showError("Please enter email and password."); return; }
 
-      const { error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) { showError(error.message); return; }
+      var result = await sb.auth.signInWithPassword({ email: email, password: password });
+      if (result.error) { showError(result.error.message); return; }
 
       await showConsent();
     }
@@ -119,19 +125,19 @@
       document.getElementById("consent-section").classList.remove("hidden");
 
       try {
-        const { data, error } = await sb.auth.oauth.getAuthorizationDetails(authorizationId);
-        if (error) throw error;
+        var result = await sb.auth.oauth.getAuthorizationDetails(authorizationId);
+        if (result.error) throw result.error;
 
-        const clientName = data.client?.name || "Unknown Application";
+        var clientName = (result.data.client && result.data.client.name) || "Unknown Application";
         document.getElementById("consent-title").textContent = "Authorize " + clientName;
         document.getElementById("client-info").innerHTML =
           "<strong>" + clientName + "</strong>" +
-          (data.redirect_uri ? "<span style='font-size:0.8rem;color:#94a3b8;'>Redirect: " + data.redirect_uri + "</span>" : "");
+          (result.data.redirect_uri ? "<br><span style='font-size:0.8rem;color:#94a3b8;'>Redirect: " + result.data.redirect_uri + "</span>" : "");
 
-        if (data.scopes && data.scopes.length > 0) {
+        if (result.data.scopes && result.data.scopes.length > 0) {
           document.getElementById("scopes-section").classList.remove("hidden");
           document.getElementById("scopes-list").innerHTML =
-            data.scopes.map(function(s) { return "<li>" + s + "</li>"; }).join("");
+            result.data.scopes.map(function(s) { return "<li>" + s + "</li>"; }).join("");
         }
       } catch (e) {
         showStatus("Error loading authorization details: " + e.message);
@@ -141,20 +147,24 @@
     async function handleApprove() {
       showStatus("Approving...");
       try {
-        const { data, error } = await sb.auth.oauth.approveAuthorization(authorizationId);
-        if (error) throw error;
-        window.location.href = data.redirect_to;
+        var result = await sb.auth.oauth.approveAuthorization(authorizationId);
+        if (result.error) throw result.error;
+        showStatus("Redirecting...", "redirect_to: " + result.data.redirect_to);
+        // Short delay so user can see the redirect URL for debugging
+        setTimeout(function() {
+          window.location.href = result.data.redirect_to;
+        }, 500);
       } catch (e) {
-        showStatus("Error: " + e.message);
+        showStatus("Error: " + e.message, JSON.stringify(e));
       }
     }
 
     async function handleDeny() {
       showStatus("Denying...");
       try {
-        const { data, error } = await sb.auth.oauth.denyAuthorization(authorizationId);
-        if (error) throw error;
-        window.location.href = data.redirect_to;
+        var result = await sb.auth.oauth.denyAuthorization(authorizationId);
+        if (result.error) throw result.error;
+        window.location.href = result.data.redirect_to;
       } catch (e) {
         showStatus("Error: " + e.message);
       }
@@ -162,8 +172,8 @@
 
     // Check if already logged in
     (async function() {
-      const { data: { user } } = await sb.auth.getUser();
-      if (user && authorizationId) {
+      var result = await sb.auth.getUser();
+      if (result.data.user && authorizationId) {
         await showConsent();
       }
     })();
